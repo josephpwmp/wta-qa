@@ -331,6 +331,28 @@ function ConsoleCheckPanel({ data }: { data: ConsoleBundle }) {
             </a>
           </span>
         ) : null}
+        {data.omittedHeadlessNoise ? (
+          <p className="max-w-3xl text-xs leading-snug text-neutral-600">
+            <span className="font-semibold text-neutral-700">Headless noise filtered:</span>{" "}
+            {[
+              data.omittedHeadlessNoise.requestFailures > 0
+                ? `${data.omittedHeadlessNoise.requestFailures} failed-request line(s)`
+                : null,
+              data.omittedHeadlessNoise.consoleWarnings > 0
+                ? `${data.omittedHeadlessNoise.consoleWarnings} warning(s)`
+                : null,
+              data.omittedHeadlessNoise.consoleErrors > 0
+                ? `${data.omittedHeadlessNoise.consoleErrors} console error line(s)`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(", ")}{" "}
+            (
+            <code className="rounded bg-neutral-100 px-1">ERR_INSUFFICIENT_RESOURCES</code>, GPU/WebGPU/audio
+            warnings, analytics <code className="rounded bg-neutral-100 px-1">ERR_ABORTED</code>) — usually not seen in
+            a normal desktop browser session.
+          </p>
+        ) : null}
       </div>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {list("HTTP 4xx/5xx (which URL failed)", httpLines, "red")}
@@ -342,7 +364,8 @@ function ConsoleCheckPanel({ data }: { data: ConsoleBundle }) {
       <p className="text-xs text-neutral-500">
         Headless Chromium (Playwright): <code className="rounded bg-neutral-100 px-1">load</code> + 2s settle.
         Generic Chrome lines like “Failed to load resource … status 403 ()” are omitted when that status is already
-        listed above with the URL. Compare with DevTools → Network in your own browser.
+        listed above with the URL. Resource-limit and GPU/audio/analytics-abort noise is filtered out when it matches
+        known headless-only patterns. Compare with DevTools → Console / Network on your machine for ground truth.
       </p>
     </div>
   );

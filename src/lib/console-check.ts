@@ -87,6 +87,12 @@ export type ConsoleCheckResult = {
    * These often also appear as console "Failed to load resource" but do not trigger requestfailed.
    */
   httpErrorResponses: string[];
+  /** Counts of lines omitted as known headless/serverless noise (not shown in lists). */
+  omittedHeadlessNoise?: {
+    requestFailures: number;
+    consoleWarnings: number;
+    consoleErrors: number;
+  };
 };
 
 /**
@@ -128,13 +134,61 @@ function dedupeCap(arr: string[], max: number): string[] {
   return out;
 }
 
+/** Chromium hits connection/memory limits in headless/serverless; real browsers rarely show this for the same page. */
+function isInsufficientResourcesNoise(line: string): boolean {
+  return /ERR_INSUFFICIENT_RESOURCES|insufficient resources/i.test(line);
+}
+
+/** Analytics / tag manager requests often abort in automation (navigation teardown, blocked third-party, or cascade after resource exhaustion). */
+function isLikelyHeadlessAnalyticsAbort(line: string): boolean {
+  if (!/ERR_ABORTED|aborted/i.test(line)) return false;
+  return /google-analytics\.com|googletagmanager\.com|google\.com\/ccm|google\.com\/pagead|\/g\/collect|doubleclick\.net|facebook\.com\/tr|clarity\.ms|hotjar\.com|segment\.com/i.test(
+    line,
+  );
+}
+
+function isHeadlessNoiseRequestFailure(line: string): boolean {
+  return isInsufficientResourcesNoise(line) || isLikelyHeadlessAnalyticsAbort(line);
+}
+
+/** GPU / WebGPU / autoplay — normal in headless; not what users see in desktop Chrome. */
+function isHeadlessNoiseWarning(line: string): boolean {
+  const t = line.trim();
+  if (/WebGPU Context Provider|Failed to create WebGPU/i.test(t)) return true;
+  if (/AudioContext was not allowed to start|user gesture/i.test(t)) return true;
+  if (/GL Driver Message|GPU stall|ReadPixels|\.WebGL-/i.test(t)) return true;
+  if (/swiftshader|ANGLE|WebGL.*Performance/i.test(t)) return true;
+  return false;
+}
+
+/** Duplicate "Failed to load resource" console lines for resource exhaustion. */
+function isHeadlessNoiseConsoleError(line: string): boolean {
+  return isInsufficientResourcesNoise(line);
+}
+
+function partitionNoise(lines: string[], isNoise: (s: string) => boolean): { kept: string[]; dropped: number } {
+  let dropped = 0;
+  const kept: string[] = [];
+  for (const line of lines) {
+    if (isNoise(line)) dropped++;
+    else kept.push(line);
+  }
+  return { kept, dropped };
+}
+
 export function consoleCheckToMarkdown(r: ConsoleCheckResult): string {
+  const o = r.omittedHeadlessNoise;
+  const omitNote =
+    o && (o.requestFailures > 0 || o.consoleWarnings > 0 || o.consoleErrors > 0)
+      ? `**Omitted (headless noise):** ${o.requestFailures} failed-request lines, ${o.consoleWarnings} warnings, ${o.consoleErrors} console errors — see UI note.`
+      : null;
   const lines = [
     `# Browser console check`,
     ``,
     `**Requested URL:** ${r.url}`,
     r.navigatedUrl ? `**Final URL:** ${r.navigatedUrl}` : null,
     r.navigationTimedOut ? `**Note:** Initial navigation timed out; results may be partial.` : null,
+    omitNote,
     ``,
     `## Console (error) — ${r.consoleErrors.length}`,
     ...(r.consoleErrors.length ? r.consoleErrors.map((e) => `- ${e}`) : [`- None`]),
@@ -224,18 +278,32 @@ export async function runConsoleCheck(targetUrl: string): Promise<ConsoleCheckRe
 
   await browser.close().catch(() => {});
 
+  const rfPart = partitionNoise(requestFailures, isHeadlessNoiseRequestFailure);
+  const warnPart = partitionNoise(consoleWarnings, isHeadlessNoiseWarning);
+  const errPart = partitionNoise(consoleErrors, isHeadlessNoiseConsoleError);
+
   const httpDeduped = dedupeCap(httpErrorResponses, MAX_ITEMS);
-  let consoleDeduped = stripRedundantResourceConsoleErrors(consoleErrors, httpDeduped);
+  let consoleDeduped = stripRedundantResourceConsoleErrors(errPart.kept, httpDeduped);
   consoleDeduped = stripConsoleGeneric403ForIgnoredNitro(consoleDeduped, ignoredNitro403Count);
+
+  const omitted =
+    rfPart.dropped + warnPart.dropped + errPart.dropped > 0
+      ? {
+          requestFailures: rfPart.dropped,
+          consoleWarnings: warnPart.dropped,
+          consoleErrors: errPart.dropped,
+        }
+      : undefined;
 
   return {
     url: targetUrl,
     navigatedUrl,
     navigationTimedOut,
     consoleErrors: dedupeCap(consoleDeduped, MAX_ITEMS),
-    consoleWarnings: dedupeCap(consoleWarnings, MAX_ITEMS),
+    consoleWarnings: dedupeCap(warnPart.kept, MAX_ITEMS),
     pageErrors: dedupeCap(pageErrors, MAX_ITEMS),
-    requestFailures: dedupeCap(requestFailures, MAX_ITEMS),
+    requestFailures: dedupeCap(rfPart.kept, MAX_ITEMS),
     httpErrorResponses: httpDeduped,
+    omittedHeadlessNoise: omitted,
   };
 }
