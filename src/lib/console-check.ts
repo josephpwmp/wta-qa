@@ -1,8 +1,33 @@
+import fs from "node:fs";
 import type { Browser } from "playwright-core";
+
+/**
+ * Vercel’s runtime is not detected as AWS Lambda, so @sparticuz/chromium skips
+ * al2023.tar.br (NSS libs like libnss3.so) and skips LD_LIBRARY_PATH setup.
+ * Set Lambda-style env *before* the module loads so its top-level init runs.
+ *
+ * If a prior cold start left /tmp/chromium without al2023, executablePath() returns
+ * early and never extracts NSS — remove the stale binary so a full extract runs.
+ */
+function prepareSparticuzForVercel(): void {
+  if (!process.env.VERCEL) return;
+  process.env.AWS_EXECUTION_ENV ??= "AWS_Lambda_nodejs20.x";
+  process.env.AWS_LAMBDA_JS_RUNTIME ??= "nodejs20.x";
+
+  const nssHint = "/tmp/al2023/lib/libnss3.so";
+  try {
+    if (fs.existsSync("/tmp/chromium") && !fs.existsSync(nssHint)) {
+      fs.unlinkSync("/tmp/chromium");
+    }
+  } catch {
+    /* ignore */
+  }
+}
 
 async function launchChromium(): Promise<Browser> {
   const { chromium } = await import("playwright-core");
   if (process.env.VERCEL) {
+    prepareSparticuzForVercel();
     const sparticuz = (await import("@sparticuz/chromium")).default;
     return chromium.launch({
       args: sparticuz.args,
