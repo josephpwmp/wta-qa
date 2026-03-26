@@ -1,4 +1,20 @@
-import { chromium, type Browser } from "playwright";
+import type { Browser } from "playwright-core";
+
+async function launchChromium(): Promise<Browser> {
+  const { chromium } = await import("playwright-core");
+  if (process.env.VERCEL) {
+    const sparticuz = (await import("@sparticuz/chromium")).default;
+    return chromium.launch({
+      args: sparticuz.args,
+      executablePath: await sparticuz.executablePath(),
+      headless: true,
+    });
+  }
+  return chromium.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
+}
 
 const MAX_ITEMS = 50;
 
@@ -126,14 +142,13 @@ export async function runConsoleCheck(targetUrl: string): Promise<ConsoleCheckRe
   let navigationTimedOut = false;
 
   try {
-    browser = await chromium.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
+    browser = await launchChromium();
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     throw new Error(
-      `Could not launch Chromium (${msg}). On this machine run: npx playwright install chromium`,
+      process.env.VERCEL
+        ? `Could not launch Chromium for serverless (${msg}).`
+        : `Could not launch Chromium (${msg}). Run: npm run playwright:install`,
     );
   }
 

@@ -45,7 +45,7 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         error:
-          "PageSpeed is not configured. Set GOOGLE_PAGESPEED_API_KEY in your environment (Google Cloud API key with PageSpeed Insights API enabled).",
+          "PageSpeed is not configured. Set GOOGLE_PAGESPEED_API_KEY (Google Cloud API key with PageSpeed Insights API enabled). On Vercel: Project → Settings → Environment Variables, add it for Production (and Preview if needed), then redeploy.",
       },
       { status: 503 },
     );
